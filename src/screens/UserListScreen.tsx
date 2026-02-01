@@ -12,7 +12,7 @@ type RootStackParamList = {
 };
 
 export const UserListScreen = () => {
-    const { peers, conversations, deviceId, renamePeer } = useChatStore();
+    const { peers, conversations, deviceId, renamePeer, unreadCounts } = useChatStore();
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
     // Rename State
@@ -60,6 +60,9 @@ export const UserListScreen = () => {
         const displayName = peer?.name || userId.substring(0, 8);
         const lastContent = lastMsg ? (lastMsg.senderId === deviceId ? 'You: ' : '') + lastMsg.content : 'No messages yet';
 
+        // Unread Badge Logic
+        const unreadCount = unreadCounts[userId] || 0;
+
         return (
             <TouchableOpacity
                 style={styles.itemContainer}
@@ -77,7 +80,16 @@ export const UserListScreen = () => {
                             {lastMsg ? new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                         </Text>
                     </View>
-                    <Text style={styles.lastMsg} numberOfLines={1}>{lastContent}</Text>
+                    <View style={styles.messageRow}>
+                        <Text style={[styles.lastMsg, unreadCount > 0 && styles.lastMsgBold]} numberOfLines={1}>
+                            {lastContent}
+                        </Text>
+                        {unreadCount > 0 && (
+                            <View style={styles.unreadBadge}>
+                                <Text style={styles.unreadText}>{unreadCount}</Text>
+                            </View>
+                        )}
+                    </View>
                 </View>
             </TouchableOpacity>
         );
@@ -281,5 +293,29 @@ const styles = StyleSheet.create({
     modalButtonText: {
         color: 'white',
         fontWeight: 'bold'
+    },
+    messageRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+    },
+    lastMsgBold: {
+        fontWeight: 'bold',
+        color: THEME.colors.text,
+    },
+    unreadBadge: {
+        backgroundColor: THEME.colors.primary,
+        borderRadius: 10,
+        minWidth: 20,
+        height: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: 6,
+        marginLeft: 8,
+    },
+    unreadText: {
+        color: 'white',
+        fontSize: 10,
+        fontWeight: 'bold',
     }
 });

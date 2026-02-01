@@ -6,8 +6,14 @@ import { THEME } from '../theme/colors';
 
 export const ChatScreen = ({ route, navigation }: any) => {
     const { userId, userName } = route.params || {};
-    const { conversations, deviceId, sendMessage, initialize } = useChatStore();
+    const { conversations, deviceId, sendMessage, setActivePeer } = useChatStore();
     const [inputText, setInputText] = useState('');
+
+    // Handle Active State for Read Receipts
+    useEffect(() => {
+        setActivePeer(userId);
+        return () => setActivePeer(null);
+    }, [userId]);
 
     // Get specific conversion
     const messages = conversations[userId] || [];

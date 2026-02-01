@@ -126,9 +126,12 @@ export class MeshRouter {
                     // CRITICAL FIX: Generate a STABLE ID based on content to prevent infinite loops
                     // The BLE scanner sees the same packet 50x/sec. We must dedup it.
                     // Simple Hash: Base64 of "SENDER:CONTENT"
-                    // To allow sending the same message again later, we add a rough timestamp bucket (e.g. 10 seconds)
-                    const timeBucket = Math.floor(Date.now() / 10000); // 10-second window
-                    const stableId = `msg_${senderId}_${content.substring(0, 5)}_${timeBucket}`;
+                    // To allow sending the same message again later, we add a rough timestamp bucket
+                    // INCREASED TO 60 SECONDS to prevent spam
+                    const timeBucket = Math.floor(Date.now() / 60000);
+                    // Use full content for uniqueness (it's short anyway due to BLE limits)
+                    // Removing substring(0,5) to prevent collision between "Hello" and "Hello 2"
+                    const stableId = `msg_${senderId}_${content}_${timeBucket}`;
 
                     // Create dummy message packet
                     const msg: MessagePacket = {

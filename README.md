@@ -1,97 +1,105 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Offline Bluetooth Chat App
 
-# Getting Started
+An offline messaging application built with React Native (Expo) that allows users to communicate without an internet connection. It utilizes Bluetooth Low Energy (BLE) to create a mesh-like network where messages can hop between devices to reach their destination.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## 🚀 Features
 
-## Step 1: Start Metro
+-   **Offline Communication**: No internet (Wi-Fi/4G) required. Works entirely over Bluetooth.
+-   **Mesh Networking**: Messages are relayed between devices using a "Store and Forward" flooding mechanism.
+-   **Secure Identity**: Devices are identified by a unique ID generated from a locally created Elliptic Curve (EC) Key Pair.
+-   **Cross-Platform**: Designed to work on Android (and iOS with appropriate permissions).
+-   **Privacy Focused**: Keys are generated locally; no central server involved.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+---
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## 🛠 Modules
 
-```sh
-# Using npm
-npm start
+The application is structured into several core modules that handle specific responsibilities:
 
-# OR using Yarn
-yarn start
-```
+### 1. `BleModule.ts` (Bluetooth Layer)
+This is the low-level driver for Bluetooth operations.
+-   **Scanning**: Continuously scans for other devices advertising the specific Service UUID.
+-   **Advertising**: Broadcasts the device's presence and short messages using BLE Manufacturer Data.
+-   **Packet Handling**: Decodes incoming raw BLE packets into usable message objects.
+-   **Tech**: Uses `react-native-ble-plx` for scanning and `react-native-ble-advertiser` for broadcasting (due to Android limitations on advertising).
 
-## Step 2: Build and run your app
+### 2. `MeshRouter.ts` (Network Layer)
+Handles the logic for routing messages through the network.
+-   **Store and Forward**: Receives messages, stores them, and re-broadcasts them to neighbors.
+-   **TTL (Time-To-Live)**: Each message has a TTL counter (default: 3 hops) that decrements on every hop to prevent infinite loops.
+-   **Deduplication**: Tracks unique Message IDs to ensure the same message isn't processed or displayed multiple times.
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### 3. `SecurityModule.ts` (Security Layer)
+Manages encryption and identity.
+-   **Key Generation**: Generates an Elliptic Curve (EC) Public/Private key pair on first launch using `react-native-quick-crypto`.
+-   **Device ID**: Your unique Chat ID is the first 12 characters of the SHA-256 hash of your Public Key.
+-   **Signing**: Digitally signs outgoing messages to prove authenticity.
 
-### Android
+### 4. `StorageService.ts` / `useChatStore.ts` (Data Layer)
+-   **Persistence**: Saves chat history and known peers using `AsyncStorage`.
+-   **State Management**: Uses `Zustand` for reactive UI state updates.
 
-```sh
-# Using npm
-npm run android
+---
 
-# OR using Yarn
-yarn android
-```
+## 📦 Installation & Setup
 
-### iOS
+### Prerequisites
+-   Node.js (>= 18)
+-   Android Studio (for Android Simulator or physical device build)
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+### Steps
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+1.  **Clone the Repository**
+    ```bash
+    git clone https://github.com/satya1234msn/bluetooth-chat-app.git
+    cd bluetooth-chat-app
+    ```
 
-```sh
-bundle install
-```
+2.  **Install Dependencies**
+    ```bash
+    npm install
+    ```
+    *Note: A `postinstall` script will automatically run `patch-package` to apply necessary fixes to node_modules.*
 
-Then, and every time you update your native dependencies, run:
+3.  **Build Pre-requisites**
+    Generate native directories (since this uses native BLE modules):
+    ```bash
+    npx expo prebuild
+    ```
 
-```sh
-bundle exec pod install
-```
+### Running the App
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+**For Android:**
+1.  Connect your Android device via USB or start an Emulator.
+2.  Run:
+    ```bash
+    npm run android
+    ```
 
-```sh
-# Using npm
+**For iOS:**
+(Requires macOS and Xcode)
+```bash
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+---
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+## 📱 How It Works
 
-## Step 3: Modify your app
+1.  **Discovery**: When you open the app, it asks for Bluetooth and Location permissions. Once granted, it starts advertising your "Presence" (Device ID) to nearby devices.
+2.  **Messaging**:
+    *   When you send a message, it is wrapped in variables (ID, Timestamp, Signature).
+    *   The `BleModule` broadcasts this packet to the immediate vicinity.
+3.  **Relaying (Mesh)**:
+    *   A nearby device receives the packet.
+    *   The `MeshRouter` checks if it has seen this Message ID before.
+    *   If valid and new, it saves the message and **re-broadcasts** it to *its* neighbors (decrementing the TTL).
+4.  **Display**: The UI listens to the store and updates when new messages arrive.
 
-Now that you have successfully run the app, let's make changes!
+## ⚠️ Limitations
+-   **Range**: Limited by Bluetooth hardware (~10-50m).
+-   **Bandwidth**: extremely low. Images are heavily compressed or not supported in the current broadcast mode.
+-   **Packet Size**: BLE legacy advertising is limited to 31 bytes. Longer messages may need to be fragmented (currently implemented as short message support).
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+## 📄 License
+MIT

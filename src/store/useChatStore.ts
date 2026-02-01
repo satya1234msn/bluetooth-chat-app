@@ -1,11 +1,12 @@
-
 import { create } from 'zustand';
+import { Vibration } from 'react-native';
 import { MessagePacket, Peer } from '../modules/MeshTypes';
 import { router } from '../modules/MeshRouter';
 import { storage } from '../modules/StorageService';
 
 interface ChatState {
     conversations: Record<string, MessagePacket[]>; // peerId -> messages
+    unreadCounts: Record<string, number>; // peerId -> count
     peers: Peer[];
     deviceId: string;
     isReady: boolean;
@@ -16,10 +17,12 @@ interface ChatState {
     refreshMessages: () => void;
     setActivePeer: (peerId: string | null) => void;
     renamePeer: (peerId: string, newName: string) => Promise<void>;
+    markAsRead: (peerId: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
     conversations: {},
+    unreadCounts: {},
     peers: [],
     deviceId: '',
     isReady: false,
@@ -28,32 +31,51 @@ export const useChatStore = create<ChatState>((set, get) => ({
     initialize: async () => {
         console.log('[STORE] Initializing chat store...');
         // Hook router callback
-        router.onNewMessage = (msg) => {
-            console.log('[STORE] onNewMessage callback triggered:', msg.id);
+        router.onNewMessage = (msg: MessagePacket) => {
+            // console.log('[STORE] onNewMessage callback triggered:', msg.id);
+            const state = get();
+
+            // Notification Logic
+            // If message is NOT from me, and IS new (not re-loaded from storage on init)
+            // But wait, onNewMessage is called for every "new" message router finds
+            // If I am NOT in the chat with this person, vibrate and increment unread
+            if (msg.senderId !== state.deviceId) {
+                if (state.activePeerId !== msg.senderId) {
+                    // Increment Unread
+                    const currentCount = state.unreadCounts[msg.senderId] || 0;
+                    set({
+                        unreadCounts: {
+                            ...state.unreadCounts,
+                            [msg.senderId]: currentCount + 1
+                        }
+                    });
+
+                    // Haptic Notification
+                    Vibration.vibrate(500); // 500ms vibration
+                }
+            }
+
             get().refreshMessages();
         };
 
         router.onPeerUpdate = (peers) => {
-            console.log('[STORE] onPeerUpdate callback triggered, peer count:', peers.length);
+            // console.log('[STORE] onPeerUpdate callback triggered, peer count:', peers.length);
             set({ peers });
         };
 
+        // ... rest of initialize ...
         console.log('[STORE] Starting router...');
         await router.start();
         console.log('[STORE] Router started');
 
-        // Initial Load
-        console.log('[STORE] Running initial refresh...');
-        get().refreshMessages();
-
         const { security } = require('../modules/SecurityModule');
-        console.log('[STORE] Device ID:', security.deviceId);
         set({ deviceId: security.deviceId, isReady: true });
-        console.log('[STORE] Initialization complete');
+
+        // Final refresh
+        get().refreshMessages();
     },
 
     sendMessage: async (text: string, targetId: string = 'BROADCAST') => {
-        // console.log('[STORE] Sending message to:', targetId, 'content:', text);
         await router.sendMessage(text, targetId);
         get().refreshMessages();
     },
@@ -61,44 +83,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
     refreshMessages: () => {
         const allMsgs = storage.getMessages();
         const myId = get().deviceId;
-        console.log('[STORE] refreshMessages - Total messages in storage:', allMsgs.length);
-        console.log('[STORE] My device ID:', myId);
 
         // Group by Peer
         const newConversations: Record<string, MessagePacket[]> = {};
 
         allMsgs.forEach(msg => {
-            // Determine who the "other" person is
             const otherId = msg.senderId === myId ? msg.receiverId : msg.senderId;
-            // If receiver was BROADCAST, then everyone sees it in BROADCAST channel
             const key = (msg.receiverId === 'BROADCAST' || msg.receiverId === 'ALL') ? 'BROADCAST' : otherId;
 
             // Primary bucket
             if (!newConversations[key]) newConversations[key] = [];
             newConversations[key].push(msg);
 
-            // UX IMPROVEMENT: If it's an incoming BROADCAST from someone else, 
-            // also show it in the private chat with that person.
-            // This ensures if User A sends a "DM" (which is actually broadcast), User B sees it in User A's chat.
+            // Cross-posting for visibility
             if (key === 'BROADCAST' && msg.senderId !== myId) {
                 const senderKey = msg.senderId;
                 if (!newConversations[senderKey]) newConversations[senderKey] = [];
-                // Only add if not already there (though we are rebuilding from scratch so it's fine)
                 newConversations[senderKey].push(msg);
             }
         });
 
-        // console.log('[STORE] Conversation keys created:', Object.keys(newConversations));
         set({ conversations: newConversations });
     },
 
-    setActivePeer: (peerId) => set({ activePeerId: peerId }),
+    setActivePeer: (peerId) => {
+        set({ activePeerId: peerId });
+        if (peerId) {
+            get().markAsRead(peerId);
+        }
+    },
+
+    markAsRead: (peerId: string) => {
+        const state = get();
+        if (state.unreadCounts[peerId]) {
+            const newCounts = { ...state.unreadCounts };
+            delete newCounts[peerId];
+            set({ unreadCounts: newCounts });
+        }
+    },
 
     renamePeer: async (peerId: string, newName: string) => {
         const peer = storage.getPeer(peerId);
         if (peer) {
             await storage.savePeer({ ...peer, name: newName });
-            // Refresh peers in state
             const peers = storage.getPeers();
             set({ peers });
         }
