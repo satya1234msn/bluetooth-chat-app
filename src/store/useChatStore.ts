@@ -3,17 +3,18 @@ import { Vibration } from 'react-native';
 import { MessagePacket, Peer } from '../modules/MeshTypes';
 import { router } from '../modules/MeshRouter';
 import { storage } from '../modules/StorageService';
+import { security } from '../modules/SecurityModule';
 
 interface ChatState {
-    conversations: Record<string, MessagePacket[]>; // peerId -> messages
-    unreadCounts: Record<string, number>; // peerId -> count
+    conversations: Record<string, MessagePacket[]>; // peerId -> messages (newest first)
+    unreadCounts: Record<string, number>;           // peerId -> unread count
     peers: Peer[];
     deviceId: string;
     isReady: boolean;
-    activePeerId: string | null; // Currently selected chat
+    activePeerId: string | null;
 
     initialize: () => Promise<void>;
-    sendMessage: (text: string, targetId?: string) => Promise<void>;
+    sendMessage: (text: string, targetId: string) => Promise<void>;
     refreshMessages: () => void;
     setActivePeer: (peerId: string | null) => void;
     renamePeer: (peerId: string, newName: string) => Promise<void>;
@@ -30,52 +31,48 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     initialize: async () => {
         console.log('[STORE] Initializing chat store...');
-        // Hook router callback
+
+        // Hook router callbacks
         router.onNewMessage = (msg: MessagePacket) => {
-            // console.log('[STORE] onNewMessage callback triggered:', msg.id);
             const state = get();
 
-            // Notification Logic
-            // If message is NOT from me, and IS new (not re-loaded from storage on init)
-            // But wait, onNewMessage is called for every "new" message router finds
-            // If I am NOT in the chat with this person, vibrate and increment unread
+            // If the message is NOT from me and I'm NOT viewing this conversation,
+            // increment unread count and vibrate
             if (msg.senderId !== state.deviceId) {
                 if (state.activePeerId !== msg.senderId) {
-                    // Increment Unread
                     const currentCount = state.unreadCounts[msg.senderId] || 0;
                     set({
                         unreadCounts: {
                             ...state.unreadCounts,
-                            [msg.senderId]: currentCount + 1
-                        }
+                            [msg.senderId]: currentCount + 1,
+                        },
                     });
-
-                    // Haptic Notification
-                    Vibration.vibrate(500); // 500ms vibration
+                    Vibration.vibrate(500);
                 }
             }
 
             get().refreshMessages();
         };
 
-        router.onPeerUpdate = (peers) => {
-            // console.log('[STORE] onPeerUpdate callback triggered, peer count:', peers.length);
+        router.onPeerUpdate = (peers: Peer[]) => {
             set({ peers });
         };
 
-        // ... rest of initialize ...
         console.log('[STORE] Starting router...');
         await router.start();
         console.log('[STORE] Router started');
 
-        const { security } = require('../modules/SecurityModule');
         set({ deviceId: security.deviceId, isReady: true });
 
-        // Final refresh
+        // Initial message load
         get().refreshMessages();
     },
 
-    sendMessage: async (text: string, targetId: string = 'BROADCAST') => {
+    sendMessage: async (text: string, targetId: string) => {
+        if (!targetId) {
+            console.error('[STORE] sendMessage called without targetId');
+            return;
+        }
         await router.sendMessage(text, targetId);
         get().refreshMessages();
     },
@@ -84,29 +81,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const allMsgs = storage.getMessages();
         const myId = get().deviceId;
 
-        // Group by Peer
+        // Group messages by the "other" participant in each conversation
         const newConversations: Record<string, MessagePacket[]> = {};
+        const seenInBucket: Record<string, Set<string>> = {};
+
+        const addToBucket = (key: string, msg: MessagePacket) => {
+            if (!newConversations[key]) {
+                newConversations[key] = [];
+                seenInBucket[key] = new Set();
+            }
+            if (!seenInBucket[key].has(msg.id)) {
+                seenInBucket[key].add(msg.id);
+                newConversations[key].push(msg);
+            }
+        };
 
         allMsgs.forEach(msg => {
             const otherId = msg.senderId === myId ? msg.receiverId : msg.senderId;
-            const key = (msg.receiverId === 'BROADCAST' || msg.receiverId === 'ALL') ? 'BROADCAST' : otherId;
-
-            // Primary bucket
-            if (!newConversations[key]) newConversations[key] = [];
-            newConversations[key].push(msg);
-
-            // Cross-posting for visibility
-            if (key === 'BROADCAST' && msg.senderId !== myId) {
-                const senderKey = msg.senderId;
-                if (!newConversations[senderKey]) newConversations[senderKey] = [];
-                newConversations[senderKey].push(msg);
-            }
+            addToBucket(otherId, msg);
         });
 
         set({ conversations: newConversations });
     },
 
-    setActivePeer: (peerId) => {
+    setActivePeer: (peerId: string | null) => {
         set({ activePeerId: peerId });
         if (peerId) {
             get().markAsRead(peerId);
@@ -129,5 +127,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const peers = storage.getPeers();
             set({ peers });
         }
-    }
+    },
 }));

@@ -15,9 +15,10 @@ export interface Peer {
     id: string;
     publicKey: string;
     lastSeen: number;
-    status: 'connected' | 'disconnected';
+    status: 'connected' | 'disconnected' | 'indirect';  // indirect = discovered via mesh
     rssi?: number;
     name?: string;       // User's display name
     avatar?: string;     // Base64 image
     bio?: string;        // Short bio
+    discoveredVia?: string;  // Peer ID that told us about this peer
 }

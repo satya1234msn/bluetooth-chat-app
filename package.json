@@ -8,7 +8,6 @@
     "ios": "expo run:ios",
     "lint": "eslint .",
     "test": "jest",
-    "test": "jest",
     "prebuild": "expo prebuild",
     "postinstall": "patch-package"
   },
@@ -43,6 +42,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^25.0.10",
     "@types/react": "~18.3.12",
+    "@types/react-test-renderer": "^19.1.0",
     "eas-cli": "^12.6.0",
     "jest": "^29.7.0",
     "typescript": "^5.3.3"

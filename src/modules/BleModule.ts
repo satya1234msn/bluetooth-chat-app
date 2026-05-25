@@ -1,11 +1,12 @@
 
 import { BleManager, ScanMode, Device } from 'react-native-ble-plx';
 import BLEAdvertiser from 'react-native-ble-advertiser';
-import { PermissionsAndroid, Platform, NativeEventEmitter, NativeModules } from 'react-native';
+import { PermissionsAndroid, Platform } from 'react-native';
 import { Buffer } from 'buffer';
 
 const SERVICE_UUID = '0000FFFF-0000-1000-8000-00805F9B34FB';
 const MANUFACTURER_ID = 0xFFFF; // Testing ID
+const MAX_DISCOVERED_DEVICES = 500; // Prevent unbounded Set growth
 
 export interface BlePacket {
     rssi: number;
@@ -26,8 +27,6 @@ export class BleModule {
 
     async initialize() {
         await this.requestPermissions();
-
-        // Setup Advertiser
         BLEAdvertiser.setCompanyId(MANUFACTURER_ID);
     }
 
@@ -39,7 +38,7 @@ export class BleModule {
                 PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
                 PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
             ]);
-            console.log('Permissions:', grants);
+            console.log('[BLE] Permissions:', grants);
         }
     }
 
@@ -49,7 +48,7 @@ export class BleModule {
 
         console.log('[BLE] Starting BLE Scan...');
         this.manager.startDeviceScan(
-            null, // Scan all, filter later for resilience
+            null,
             { allowDuplicates: true, scanMode: ScanMode.Balanced },
             (error, device) => {
                 if (error) {
@@ -68,85 +67,97 @@ export class BleModule {
         this.isScanning = false;
     }
 
+    private parsePayload(rawString: string): string | null {
+        // 1. Check if it's a Peer List packet
+        if (rawString.startsWith('PEERS:')) {
+            return rawString;
+        }
+        // 2. Check if it's a Private Message (SENDER6:RECEIVER6:CONTENT)
+        if (/^[0-9A-F]{6}:[0-9A-F]{6}:/.test(rawString)) {
+            return rawString;
+        }
+        // 3. Check if it's a Presence Advertisement (DEVICEID or DEVICEID:Username)
+        if (/^[0-9A-F]{12}(:.*)?$/.test(rawString)) {
+            return rawString;
+        }
+        return null;
+    }
+
     private handleDeviceDiscovered(device: Device) {
-        // Log NEW devices (throttled)
+        // Log NEW devices only (throttled); prune Set if it grows too large
         if (!this.discoveredDevices.has(device.id)) {
+            if (this.discoveredDevices.size >= MAX_DISCOVERED_DEVICES) {
+                // Remove the oldest entry (first element of the Set)
+                const oldest = this.discoveredDevices.values().next().value;
+                if (oldest) this.discoveredDevices.delete(oldest);
+            }
             this.discoveredDevices.add(device.id);
-            console.log('[BLE] New device discovered:', device.id, 'RSSI:', device.rssi);
+            console.log('[BLE] New device:', device.id, 'RSSI:', device.rssi);
         }
 
         if (device.manufacturerData) {
             try {
                 const b = Buffer.from(device.manufacturerData, 'base64');
-                const rawString = b.toString('utf8');
+                
+                // Try decoding with offset 2 (standard prepended Company ID) and offset 0
+                let payload: string | null = null;
+                if (b.length > 2) {
+                    const candidate = b.slice(2).toString('utf8');
+                    payload = this.parsePayload(candidate);
+                }
+                if (!payload) {
+                    const candidate = b.toString('utf8');
+                    payload = this.parsePayload(candidate);
+                }
 
-                // Pattern: 12 Hex Chars, optionally followed by : and Content
-                // Ignores any garbage before the ID (e.g. "◆◆◆3B6E...")
-                // Captures Group 1: ID, Group 2: :Content
-                const match = rawString.match(/([0-9A-F]{12})(:.*)?/);
-
-                if (match) {
-                    const cleanId = match[1];
-                    const contentPart = match[2]; // Includes the colon, e.g. ":Hello"
-
-                    if (contentPart) {
-                        // It's a message! (ID:CONTENT)
-                        // Strip the colon
-                        const content = contentPart.substring(1);
-                        const fullPayload = `${cleanId}:${content}`;
-                        console.log('[BLE] Decoded Message:', fullPayload);
-
-                        this.onPacketReceived({
-                            rssi: device.rssi || -100,
-                            data: fullPayload, // SEND CLEAN DATA: "ID:CONTENT"
-                            deviceId: device.id,
-                        });
-                    } else {
-                        // It's just a Presence Advertisement (ID only)
-                        // Send clean ID
-                        this.onPacketReceived({
-                            rssi: device.rssi || -100,
-                            data: cleanId,
-                            deviceId: device.id,
-                        });
-                    }
+                if (payload) {
+                    console.log('[BLE] Decoded Valid Packet:', payload);
+                    this.onPacketReceived({
+                        rssi: device.rssi || -100,
+                        data: payload,
+                        deviceId: device.id,
+                    });
                 }
             } catch (e) {
-                // Ignore parsing errors
+                // Ignore malformed packets
             }
         }
     }
 
     /**
-     * Broadcast a packet via BLE Advertising (Manufacturer Data)
-     * Data must be short (< 24 bytes legacy, or more if extended supported)
+     * Broadcast a packet via BLE Advertising (Manufacturer Data).
+     * BLE advertising has a 31-byte limit for manufacturer data.
      */
     async broadcast(data: Uint8Array) {
         try {
-            // BLE Advertiser has 31-byte limit for manufacturer data
-            // We should only advertise our device ID (12 bytes), not full messages
-            console.log('[BLE] Broadcasting device presence...');
             await BLEAdvertiser.broadcast(SERVICE_UUID, Array.from(data), {
                 advertiseMode: BLEAdvertiser.ADVERTISE_MODE_LOW_LATENCY,
                 txPowerLevel: BLEAdvertiser.ADVERTISE_TX_POWER_HIGH,
-                connectable: false, // Broadcast only
+                connectable: false,
                 includeDeviceName: false,
-                includeTxPowerLevel: false
+                includeTxPowerLevel: false,
             });
-
         } catch (e) {
             console.warn('[BLE] Broadcast failed:', e);
         }
     }
 
     /**
-     * Advertise our device ID so others can discover us
+     * Advertise our device ID and username so others can discover us.
+     * Format: DEVICEID:Username (up to 31 bytes total)
      */
-    async advertisePresence(deviceId: string) {
+    async advertisePresence(deviceId: string, username?: string) {
         try {
-            // Send just the device ID (12 chars = 12 bytes, well under 31 byte limit)
-            const data = Buffer.from(deviceId, 'utf8');
-            console.log('[BLE] Starting presence advertisement:', deviceId);
+            let payload = deviceId; // 12 chars
+
+            if (username && username.length > 0) {
+                // 12 + 1 + name ≤ 31 → name max 18 chars
+                const trimmedName = username.substring(0, 18);
+                payload = `${deviceId}:${trimmedName}`;
+            }
+
+            console.log('[BLE] Advertising presence:', payload);
+            const data = Buffer.from(payload, 'utf8');
             await this.broadcast(data);
         } catch (e) {
             console.error('[BLE] Failed to advertise presence:', e);

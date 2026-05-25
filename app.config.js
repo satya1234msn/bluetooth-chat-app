@@ -1,4 +1,3 @@
-const { getDefaultConfig } = require('expo/config');
 
 module.exports = ({ config }) => {
     return {
@@ -8,11 +7,11 @@ module.exports = ({ config }) => {
         version: '1.0.0',
         orientation: 'portrait',
         icon: './assets/icon.png',
-        userInterfaceStyle: 'light',
+        userInterfaceStyle: 'dark',
         splash: {
             image: './assets/splash.png',
             resizeMode: 'contain',
-            backgroundColor: '#ffffff',
+            backgroundColor: '#0B0F15',
         },
         assetBundlePatterns: ['**/*'],
         ios: {
@@ -26,7 +25,7 @@ module.exports = ({ config }) => {
         android: {
             adaptiveIcon: {
                 foregroundImage: './assets/adaptive-icon.png',
-                backgroundColor: '#ffffff',
+                backgroundColor: '#0B0F15',
             },
             package: 'com.offlinechatapp',
             permissions: [

@@ -80,11 +80,10 @@ class SecurityModule {
             if (!this.keyPair) throw new Error('Security not initialized');
             const sign = QuickCrypto.createSign('SHA256');
             sign.update(data);
-            // QuickCrypto.sign() expects the key properly. 
-            // If privateKey is a PEM string, we might need to pass it directly.
-            // valid encodings: 'hex', 'base64'. 
-            const sig = sign.sign(this.keyPair.privateKey, 'base64');
-            return sig;
+            // QuickCrypto sign returns Buffer, convert to base64 string
+            // Use 'as any' because PEM strings work at runtime but types are strict
+            const sigBuffer = sign.sign(this.keyPair.privateKey as any);
+            return sigBuffer.toString('base64');
         } catch (error) {
             console.error('[SECURITY] Sign error:', error);
             return 'DUMMY_SIG';
@@ -98,7 +97,10 @@ class SecurityModule {
         try {
             const verify = QuickCrypto.createVerify('SHA256');
             verify.update(data);
-            return verify.verify(senderPublicKey, signature, 'base64');
+            // Convert base64 signature to Buffer for verification
+            const sigBuffer = Buffer.from(signature, 'base64');
+            // Use 'as any' because PEM strings work at runtime but types are strict
+            return verify.verify(senderPublicKey as any, sigBuffer);
         } catch (e) {
             console.warn('Verification failed', e);
             return false;
